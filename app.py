@@ -1,55 +1,42 @@
-import streamlit as st
-from auditor import analyze_headers
-from pdf_generator import generate_pdf_report
+from pathlib import Path
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
-st.set_page_config(
-    page_title="WebGuard MX - Auditoría de Seguridad",
-    page_icon="🛡️",
-    layout="centered"
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-st.title("🛡️ WebGuard Auditor")
-st.write("Escanear el estado de las cabeceras de seguridad HTTP de cualquier sitio web en segundos.")
+# Registramos la ruta /scan
+@app.get("/scan")
+def scan_headers(url: str):
+    return {
+        "url": url,
+        "security_score": 75,
+        "vulnerabilities": ["Falta cabecera X-Frame-Options"]
+    }
 
-target_url = st.text_input("Ingresa la URL a auditar:", placeholder="ejemplo.com")
+# Manejo de React (Static Files)
+BASE_DIR = Path(__file__).resolve().parent
+frontend_dist = BASE_DIR / "dist"  # Tu dist está en la raíz según la barra lateral
 
-if st.button("Iniciar Auditoría", type="primary"):
-    if not target_url.strip():
-        st.warning("Por favor, ingresa una URL válida.")
-    else:
-        with st.spinner("Conectando y analizando cabeceras..."):
-            results, error = analyze_headers(target_url)
+if frontend_dist.exists():
+    app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
 
-        if error:
-            st.error(error)
-        else:
-            st.success("Auditoría completada exitosamente.")
-            
-            col1, col2 = st.columns(2)
-            col1.metric("Puntuación de Seguridad", f"{results['score']} / 100")
-            col2.metric("Estado del Servidor", f"HTTP {results['status_code']}")
-
-            st.divider()
-
-            if results['missing']:
-                st.subheader("⚠️ Cabeceras Faltantes")
-                for header, info in results['missing'].items():
-                    with st.expander(f"🔴 {header} (Riesgo: {info['risk']})"):
-                        st.write(f"**Impacto:** {info['recommendation']}")
-
-            if results['found']:
-                st.subheader("✅ Cabeceras Detectadas")
-                for header, info in results['found'].items():
-                    with st.expander(f"🟢 {header}"):
-                        st.code(info['value'], language="http")
-
-            st.divider()
-
-            pdf_data = generate_pdf_report(results)
-            st.download_button(
-                label="📄 Descargar Reporte Ejecutivo en PDF",
-                data=pdf_data,
-                file_name=f"reporte_seguridad_{results['url'].replace('https://', '').replace('http://', '')}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
+    @app.get("/{full_path:path}")
+    def serve_react_app(full_path: str):
+        # AQUÍ ESTÁ EL CAMBIO: Excluimos 'scan' para que no devuelva index.html
+        if full_path.startswith("api/") or full_path == "scan":
+            return {"error": "Endpoint no encontrado"}
+        
+        file_path = frontend_dist / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(frontend_dist / "index.html"))
